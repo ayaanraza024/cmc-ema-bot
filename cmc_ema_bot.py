@@ -55,11 +55,11 @@ except ImportError as e:
 # ═════════════════════════════════════════════════════════════════════════════
 
 # --- Telegram ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "APNA_BOT_TOKEN_YAHAN")   # @BotFather se milta hai
-CHAT_ID   = os.getenv("CHAT_ID",   "APNA_CHAT_ID_YAHAN")     # @userinfobot se milta hai
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8666315793:AAGQ-ejV45YezPFQZnOiIFhhawIePkCg7X4")   # @BotFather se milta hai
+CHAT_ID   = os.getenv("CHAT_ID",   "5911994666")     # @userinfobot se milta hai
 
 # --- CoinMarketCap ---
-CMC_API_KEY = os.getenv("CMC_API_KEY", "APNI_CMC_API_KEY_YAHAN")  # coinmarketcap.com/api
+CMC_API_KEY = os.getenv("CMC_API_KEY", "725ae1359e2b4f95b90cd2b398886c25KEY")  # coinmarketcap.com/api
 
 # --- Bot Settings ---
 INTERVAL_MINUTES  = 15      # Har kitne minute baad scan karna hai
