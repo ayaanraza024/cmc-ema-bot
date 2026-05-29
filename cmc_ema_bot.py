@@ -643,7 +643,7 @@ if __name__ == "__main__":
     log.info("CMC EMA SIGNAL BOT STARTED")
     log.info("=" * 60)
 
-    asyncio.run(run_bot())TOP_N_COINS       = 100     # CMC se top kitne coins lene hain (max free: 200)
+    asyncio.run(run_bot())     # CMC se top kitne coins lene hain (max free: 200)
 MIN_VOLUME_USD    = 5_000_000  # Min 24h volume filter ($5M)
 EMA_FAST          = 20
 EMA_SLOW          = 200
