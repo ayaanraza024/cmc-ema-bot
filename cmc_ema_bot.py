@@ -27,7 +27,7 @@ except ImportError as e:
 
 # --- Telegram ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")   # Set in Railway environment variables
-CHAT_ID   = os.getenv("CHAT_ID",   "")   # Set in Railway environment variables
+CHAT_ID   = os.getenv("CHAT_ID",   "5911994666")   # Set in Railway environment variables
 
 # --- CoinMarketCap ---
 CMC_API_KEY = os.getenv("CMC_API_KEY", "725ae1359e2b4f95b90cd2b398886c25")  # Set in Railway environment variables
@@ -460,7 +460,7 @@ if __name__ == "__main__":
     # ── Config check ─────────────────────────────────────────────────────────
     errors = []
     if not BOT_TOKEN   : errors.append("BOT_TOKEN set nahi kiya!")
-    if not CHAT_ID     : errors.append("CHAT_ID set nahi kiya!")
+    if not CHAT_ID     : errors.append("5911994666")
     if not CMC_API_KEY : errors.append("725ae1359e2b4f95b90cd2b398886c25")
 
     if errors:
