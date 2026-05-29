@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+hi#!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║   CoinMarketCap + EMA 20/200 Crossover — Telegram Signal Bot        ║
@@ -488,9 +488,9 @@ async def run_bot():
 if __name__ == "__main__":
     # ── Config check ─────────────────────────────────────────────────────────
     errors = []
-    if "APNA" in BOT_TOKEN  : errors.append("BOT_TOKEN set nahi kiya!")
-    if "APNA" in CHAT_ID    : errors.append("CHAT_ID set nahi kiya!")
-    if "APNA" in CMC_API_KEY: errors.append("CMC_API_KEY set nahi kiya!")
+    if "APNA" in BOT_TOKEN  : errors.append("8666315793:AAGQ-ejV45YezPFQZnOiIFhhawIePkCg7X4")
+    if "APNA" in CHAT_ID    : errors.append("5911994666")
+    if "APNA" in CMC_API_KEY: errors.append("725ae1359e2b4f95b90cd2b398886c25")
 
     if errors:
         print("\n" + "─"*50)
