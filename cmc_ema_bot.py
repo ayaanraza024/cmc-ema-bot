@@ -9,6 +9,7 @@
 ✅ Added RSI Safe Zone Filtering (No late entries)
 ✅ Added "No Signal Found" Telegram Notifications
 ✅ Cleaned Crossover Detection Logic
+✅ Fixed Logging Syntax Error
 """
 
 import asyncio
@@ -66,7 +67,7 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s │ %(levelname)-7s │ %(message)s",
-    datefmt=%Y-%m-%d %H:%M:%S,
+    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
