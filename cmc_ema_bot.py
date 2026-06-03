@@ -3,11 +3,11 @@
 
 """
 ════════════════════════════════════════════════════════════
-    COOL_SIGNALS STYLE — HIGH ACCURACY PULLBACK BOT
+    COOL_SIGNALS STYLE — ASYNCIO FIXED PULLBACK BOT
 ════════════════════════════════════════════════════════════
-✅ Original Screenshot Design Format
+✅ Fixed Python 3.13 Asyncio / Runner Crash
 ✅ High-Accuracy EMA Pullback Strategy Integrated
-✅ "No New Signals Found" Notification Fixed
+✅ Original Screenshot Design Format & 84 Coins
 ✅ Fixed 0 Scanned Counter
 """
 
@@ -23,7 +23,9 @@ import numpy as np
 import pandas as pd
 import requests
 
+# Python 3.13 Asyncio compatible Application Framework
 from telegram import Bot
+from telegram.ext import Application
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
@@ -38,10 +40,10 @@ BOT_TOKEN = "8666315793:AAGQ-ejV45YezPFQZnOiIFhhawIePkCg7X4"
 CHAT_ID = "5911994666"
 
 INTERVAL_MINUTES = 15
-TOP_N_COINS = 84  # Original count from your screenshot
+TOP_N_COINS = 84  # Original screenshot count
 
-EMA_FAST = 20    # Safe Pullback Strategy
-EMA_SLOW = 200   # Safe Pullback Strategy
+EMA_FAST = 20    # Pullback Strategy
+EMA_SLOW = 200   # Pullback Strategy
 ATR_PERIOD = 14
 
 CANDLE_INTERVAL = "15m"
@@ -101,7 +103,7 @@ def calc_rsi(series: pd.Series, period: int = 14) -> float:
     return float(100 - 100 / (1 + rs.iloc[-1]))
 
 # ═══════════════════════════════════════════════════════════
-# BINANCE DIRECT TICKER FETCH
+# BINANCE DIRECT DATA FETCH
 # ═══════════════════════════════════════════════════════════
 
 def fetch_top_binance_coins(limit: int = TOP_N_COINS) -> list[str]:
@@ -145,7 +147,7 @@ def fetch_ohlcv(symbol: str) -> pd.DataFrame | None:
         return None
 
 # ═══════════════════════════════════════════════════════════
-# HIGH-ACCURACY PULLBACK STRATEGY LOGIC
+# STRATEGY LOGIC
 # ═══════════════════════════════════════════════════════════
 
 def detect_signal(df: pd.DataFrame) -> dict | None:
@@ -193,7 +195,7 @@ def detect_signal(df: pd.DataFrame) -> dict | None:
     return None
 
 # ═══════════════════════════════════════════════════════════
-# ORIGINAL SCREENSHOT MESSAGE DESIGN FORMAT
+# SCREENSHOT STYLE FORMATTERS
 # ═══════════════════════════════════════════════════════════
 
 def build_signal_msg(symbol: str, sig: dict) -> str:
@@ -232,7 +234,7 @@ def build_summary_msg(scanned: int, found: int, skipped: int) -> str:
     )
 
 # ═══════════════════════════════════════════════════════════
-# MAIN STATE LOOP
+# BOT RUNNER (STABLE APPLICATION PATTERN)
 # ═══════════════════════════════════════════════════════════
 
 def load_state() -> dict:
@@ -244,15 +246,22 @@ def load_state() -> dict:
 def save_state(state: dict):
     Path(STATE_FILE).write_text(json.dumps(state, indent=2))
 
-async def run_bot():
-    bot = Bot(token=BOT_TOKEN)
+async def main():
+    # Application builder se asyncio framework safely initialize hota hai Python 3.13 mein
+    app = Application.builder().token(BOT_TOKEN).build()
+    await app.initialize()
+    bot = app.bot
+    
     state = load_state()
 
     start_msg = (
         f"🔄 *Cloud Nodes Synchronized!*\n"
         f"🔍 Scanning exactly {TOP_N_COINS} High-Volume Coins..."
     )
-    await bot.send_message(chat_id=CHAT_ID, text=start_msg, parse_mode=ParseMode.MARKDOWN)
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=start_msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        log.error(f"Cannot send start message: {e}")
 
     while True:
         cycle_start = time.time()
@@ -262,13 +271,13 @@ async def run_bot():
 
         coins = fetch_top_binance_coins(TOP_N_COINS)
         if not coins:
-            log.error("Binance returned no coins. Retrying...")
+            log.error("Binance returned no coins. Retrying in 30 seconds...")
             await asyncio.sleep(30)
             continue
 
         for symbol in coins:
             try:
-                await asyncio.sleep(0.3)  # Anti-block pause
+                await asyncio.sleep(0.3)  # Anti-blocking cooldown
                 
                 df = fetch_ohlcv(symbol)
                 if df is None or len(df) < EMA_SLOW + 5:
@@ -309,8 +318,12 @@ async def run_bot():
 
         elapsed = time.time() - cycle_start
         wait = max(10, INTERVAL_MINUTES * 60 - elapsed)
+        log.info(f"Scan complete. Successfully scanned: {scanned_successfully}. Waiting {wait:.0f}s...")
         await asyncio.sleep(wait)
 
 if __name__ == "__main__":
-    log.info("Starting Correct Hybrid Bot...")
-    asyncio.run(run_bot())
+    log.info("Starting Stable Python 3.13 Bot Application...")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Bot stopped by user.")
