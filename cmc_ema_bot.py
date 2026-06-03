@@ -3,35 +3,18 @@
 
 """
 ════════════════════════════════════════════════════════════
-    CMC EMA SIGNAL BOT — CLEANED & FIXED VERSION
+    CMC EMA PULLBACK SIGNAL BOT — FINAL COMPLETE VERSION
 ════════════════════════════════════════════════════════════
-
-✅ Fixed Telegram 400 Error
-✅ Better Error Handling
-✅ Auto Retry
-✅ Stable Request Session
-✅ Duplicate Signal Protection
-✅ Safe Message Sending
-✅ Cleaner Logs
-✅ Better Config Validation
-
-INSTALL:
-pip install python-telegram-bot requests pandas numpy
-
-RUN:
-python cmc_ema_bot.py
+✅ Added Trend & Momentum Pullback Strategy (High Probability)
+✅ Added "No New Signals Found" Notification
+✅ Fixed Missing ParseMode Import
 """
-
-# ═══════════════════════════════════════════════════════════
-# IMPORTS
-# ═══════════════════════════════════════════════════════════
 
 import asyncio
 import json
 import logging
 import os
 import time
-
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -40,11 +23,11 @@ import pandas as pd
 import requests
 
 from telegram import Bot
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 
 # ═══════════════════════════════════════════════════════════
 # CONFIG
@@ -66,11 +49,10 @@ CANDLE_INTERVAL = "15m"
 CANDLE_LIMIT = 250
 
 CUSTOM_COINS = []
-# CUSTOM_COINS = ["BTC", "ETH", "SOL"]
-
 SKIP_COINS = {
-    "USDT","USDC","BUSD","DAI","TUSD","USDP",
-    "FDUSD","WBTC","WETH","STETH","WBNB"
+    "USDT","USDC","BUSD","DAI","TUSD","USDP","USDD","FDUSD",
+    "PYUSD","USDS","USD1","USDe","WBTC","WETH","STETH","WSTETH",
+    "WBETH","BTCB","CBBTC","WBNB","WEETH","LEO","CRV"
 }
 
 LOG_FILE = "cmc_ema_bot.log"
@@ -79,9 +61,8 @@ STATE_FILE = "bot_state.json"
 CMC_BASE = "https://pro-api.coinmarketcap.com/v1"
 BINANCE_BASE = "https://api.binance.com/api/v3"
 
-
 # ═══════════════════════════════════════════════════════════
-# LOGGING
+# LOGGING SETUP
 # ═══════════════════════════════════════════════════════════
 
 logging.basicConfig(
@@ -93,674 +74,28 @@ logging.basicConfig(
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
     ],
 )
-
 log = logging.getLogger("EMABot")
 
-
-# ═══════════════════════════════════════════════════════════
-# REQUEST SESSION WITH AUTO RETRY
-# ═══════════════════════════════════════════════════════════
-
+# Session setup
 session = requests.Session()
-
-retry = Retry(
-    total=5,
-    backoff_factor=1,
-    status_forcelist=[429, 500, 502, 503, 504]
-)
-
-adapter = HTTPAdapter(max_retries=retry)
-
-session.mount("https://", adapter)
-session.mount("http://", adapter)
-
+retry = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+session.mount("https://", HTTPAdapter(max_retries=retry))
 
 # ═══════════════════════════════════════════════════════════
-# HELPERS
+# HELPERS & TECHNICALS
 # ═══════════════════════════════════════════════════════════
 
 def fp(v: float) -> str:
-
-    if v is None:
-        return "N/A"
-
-    if np.isnan(v):
-        return "N/A"
-
-    if abs(v) < 0.000001:
-        return f"{v:.10f}"
-
-    elif abs(v) < 0.0001:
-        return f"{v:.8f}"
-
-    elif abs(v) < 0.01:
-        return f"{v:.6f}"
-
-    elif abs(v) < 1:
-        return f"{v:.5f}"
-
-    elif abs(v) < 100:
-        return f"{v:.3f}"
-
-    return f"{v:,.2f}"
-
-
-# ═══════════════════════════════════════════════════════════
-# STATE
-# ═══════════════════════════════════════════════════════════
-
-def load_state():
-
-    if Path(STATE_FILE).exists():
-
-        try:
-            return json.loads(Path(STATE_FILE).read_text())
-
-        except Exception:
-            return {}
-
-    return {}
-
-
-def save_state(state):
-
-    Path(STATE_FILE).write_text(
-        json.dumps(state, indent=2)
-    )
-
-
-def signal_key(symbol, sig):
-
-    return f"{symbol}_{sig['type']}_{sig['candle_time']}"
-
-
-# ═══════════════════════════════════════════════════════════
-# CMC API
-# ═══════════════════════════════════════════════════════════
-
-def cmc_headers():
-
-    return {
-        "X-CMC_PRO_API_KEY": CMC_API_KEY,
-        "Accept": "application/json"
-    }
-
-
-def fetch_top_coins(limit=TOP_N_COINS):
-
-    url = f"{CMC_BASE}/cryptocurrency/listings/latest"
-
-    params = {
-        "start": 1,
-        "limit": limit,
-        "sort": "market_cap",
-        "convert": "USD",
-    }
-
-    try:
-
-        r = session.get(
-            url,
-            headers=cmc_headers(),
-            params=params,
-            timeout=20
-        )
-
-        r.raise_for_status()
-
-        data = r.json()
-
-        coins = []
-
-        for coin in data.get("data", []):
-
-            symbol = coin["symbol"]
-
-            volume = (
-                coin.get("quote", {})
-                .get("USD", {})
-                .get("volume_24h", 0)
-            )
-
-            if symbol in SKIP_COINS:
-                continue
-
-            if volume < MIN_VOLUME_USD:
-                continue
-
-            coins.append(symbol)
-
-        log.info(f"Fetched {len(coins)} coins from CMC")
-
-        return coins
-
-    except Exception as e:
-
-        log.exception(f"CMC Error: {e}")
-
-        return []
-
-
-# ═══════════════════════════════════════════════════════════
-# BINANCE OHLCV
-# ═══════════════════════════════════════════════════════════
-
-def fetch_ohlcv(symbol):
-
-    pair = f"{symbol}USDT"
-
-    url = f"{BINANCE_BASE}/klines"
-
-    try:
-
-        r = session.get(
-            url,
-            params={
-                "symbol": pair,
-                "interval": CANDLE_INTERVAL,
-                "limit": CANDLE_LIMIT
-            },
-            timeout=15
-        )
-
-        if r.status_code == 400:
-            return None
-
-        r.raise_for_status()
-
-        raw = r.json()
-
-        df = pd.DataFrame(raw, columns=[
-            "ts","open","high","low","close","vol",
-            "close_ts","qvol","trades",
-            "tbvol","tqvol","ignore"
-        ])
-
-        for col in ["open", "high", "low", "close", "vol"]:
-
-            df[col] = df[col].astype(float)
-
-        df["ts"] = pd.to_datetime(
-            df["ts"],
-            unit="ms",
-            utc=True
-        )
-
-        return df[
-            ["ts","open","high","low","close","vol"]
-        ].reset_index(drop=True)
-
-    except Exception as e:
-
-        log.warning(f"{symbol} OHLCV Error: {e}")
-
-        return None
-
-
-# ═══════════════════════════════════════════════════════════
-# INDICATORS
-# ═══════════════════════════════════════════════════════════
-
-def calc_ema(series, period):
-
-    return series.ewm(
-        span=period,
-        adjust=False
-    ).mean()
-
-
-def calc_atr(df):
-
-    prev_close = df["close"].shift(1)
-
-    tr = pd.concat([
-        df["high"] - df["low"],
-        (df["high"] - prev_close).abs(),
-        (df["low"] - prev_close).abs(),
-    ], axis=1).max(axis=1)
-
-    atr = tr.ewm(
-        span=ATR_PERIOD,
-        adjust=False
-    ).mean()
-
-    return float(atr.iloc[-1])
-
-
-def calc_rsi(series, period=14):
-
-    delta = series.diff()
-
-    gain = delta.clip(lower=0).ewm(
-        span=period,
-        adjust=False
-    ).mean()
-
-    loss = (-delta.clip(upper=0)).ewm(
-        span=period,
-        adjust=False
-    ).mean()
-
-    rs = gain / loss.replace(0, np.nan)
-
-    rsi = 100 - (100 / (1 + rs))
-
-    return float(rsi.iloc[-1])
-
-
-# ═══════════════════════════════════════════════════════════
-# SIGNAL DETECTION
-# ═══════════════════════════════════════════════════════════
-
-def detect_signal(df):
-
-    if len(df) < EMA_SLOW + 5:
-        return None
-
-    closes = df["close"]
-
-    ema20 = calc_ema(closes, EMA_FAST)
-    ema200 = calc_ema(closes, EMA_SLOW)
-
-    current = len(df) - 1
-    previous = len(df) - 2
-
-    curr_above = ema20.iloc[current] > ema200.iloc[current]
-    prev_above = ema20.iloc[previous] > ema200.iloc[previous]
-
-    if curr_above == prev_above:
-        return None
-
-    price = float(closes.iloc[current])
-
-    atr = calc_atr(df)
-
-    rsi = calc_rsi(closes)
-
-    signal_type = "LONG" if curr_above else "SHORT"
-
-    if signal_type == "LONG":
-
-        sl = price - atr * 1.5
-        tp1 = price + atr * 2
-        tp2 = price + atr * 4
-        tp3 = price + atr * 6
-
-    else:
-
-        sl = price + atr * 1.5
-        tp1 = price - atr * 2
-        tp2 = price - atr * 4
-        tp3 = price - atr * 6
-
-    return {
-        "type": signal_type,
-        "entry": price,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
-        "tp3": tp3,
-        "ema20": float(ema20.iloc[current]),
-        "ema200": float(ema200.iloc[current]),
-        "atr": atr,
-        "rsi": rsi,
-        "candle_time": str(df["ts"].iloc[current]),
-    }
-
-
-# ═══════════════════════════════════════════════════════════
-# MESSAGE BUILDER
-# ═══════════════════════════════════════════════════════════
-
-def build_signal_msg(symbol, sig):
-
-    now = datetime.now(
-        timezone.utc
-    ).strftime("%d %b %Y %H:%M UTC")
-
-    signal = sig["type"]
-
-    if signal == "LONG":
-        emoji = "🟢"
-    else:
-        emoji = "🔴"
-
-    return f"""
-{emoji} CMC SIGNAL
-
-COIN: {symbol}/USDT
-TYPE: {signal}
-
-ENTRY: {fp(sig['entry'])}
-
-STOP LOSS: {fp(sig['sl'])}
-
-TP1: {fp(sig['tp1'])}
-TP2: {fp(sig['tp2'])}
-TP3: {fp(sig['tp3'])}
-
-EMA20: {fp(sig['ema20'])}
-EMA200: {fp(sig['ema200'])}
-
-ATR: {fp(sig['atr'])}
-RSI: {sig['rsi']:.2f}
-
-TIME: {now}
-""".strip()
-
-
-def build_summary(scanned, found, skipped):
-
-    return f"""
-SCAN COMPLETE
-
-SCANNED: {scanned}
-SIGNALS: {found}
-SKIPPED: {skipped}
-
-NEXT SCAN IN {INTERVAL_MINUTES} MINUTES
-""".strip()
-
-
-# ═══════════════════════════════════════════════════════════
-# SAFE TELEGRAM SEND
-# ═══════════════════════════════════════════════════════════
-
-async def safe_send(bot, text):
-
-    try:
-
-        await bot.send_message(
-            chat_id=str(CHAT_ID),
-            text=text
-        )
-
-        return True
-
-    except TelegramError as e:
-
-        log.exception(f"Telegram Error: {e}")
-
-        return False
-
-    except Exception as e:
-
-        log.exception(f"Unknown Send Error: {e}")
-
-        return False
-
-
-# ═══════════════════════════════════════════════════════════
-# MAIN BOT
-# ═══════════════════════════════════════════════════════════
-
-async def run_bot():
-
-    bot = Bot(token=BOT_TOKEN)
-
-    state = load_state()
-
-    await safe_send(
-        bot,
-        "CMC EMA SIGNAL BOT STARTED SUCCESSFULLY"
-    )
-
-    while True:
-
-        start_time = time.time()
-
-        signals_found = 0
-        skipped = 0
-
-        if CUSTOM_COINS:
-            coins = CUSTOM_COINS
-
-        else:
-
-            coins = fetch_top_coins()
-
-            if not coins:
-
-                log.error("No coins fetched")
-
-                await asyncio.sleep(300)
-
-                continue
-
-        log.info(f"Scanning {len(coins)} coins")
-
-        for symbol in coins:
-
-            try:
-
-                df = fetch_ohlcv(symbol)
-
-                if df is None:
-
-                    skipped += 1
-
-                    continue
-
-                sig = detect_signal(df)
-
-                if sig is None:
-                    continue
-
-                key = signal_key(symbol, sig)
-
-                if key in state:
-                    continue
-
-                msg = build_signal_msg(symbol, sig)
-
-                sent = await safe_send(bot, msg)
-
-                if sent:
-
-                    state[key] = True
-
-                    save_state(state)
-
-                    signals_found += 1
-
-                    log.info(
-                        f"SIGNAL: {symbol} {sig['type']}"
-                    )
-
-                await asyncio.sleep(0.8)
-
-            except Exception as e:
-
-                skipped += 1
-
-                log.exception(
-                    f"{symbol} Scan Error: {e}"
-                )
-
-                await asyncio.sleep(0.5)
-
-        summary = build_summary(
-            len(coins),
-            signals_found,
-            skipped
-        )
-
-        await safe_send(bot, summary)
-
-        if len(state) > 500:
-
-            keys = list(state.keys())
-
-            state = {
-                k: state[k]
-                for k in keys[-500:]
-            }
-
-            save_state(state)
-
-        elapsed = time.time() - start_time
-
-        wait_time = max(
-            10,
-            INTERVAL_MINUTES * 60 - elapsed
-        )
-
-        log.info(
-            f"Cycle Done | Signals={signals_found} | "
-            f"Skipped={skipped} | Next={wait_time:.0f}s"
-        )
-
-        await asyncio.sleep(wait_time)
-
-
-# ═══════════════════════════════════════════════════════════
-# ENTRY POINT
-# ═══════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-
-    errors = []
-
-    if "PUT_YOUR" in BOT_TOKEN:
-        errors.append("BOT TOKEN missing")
-
-    if "PUT_YOUR" in CHAT_ID:
-        errors.append("CHAT ID missing")
-
-    if "PUT_YOUR" in CMC_API_KEY:
-        errors.append("CMC API KEY missing")
-
-    if errors:
-
-        print("\nCONFIG ERROR\n")
-
-        for e in errors:
-            print(f"- {e}")
-
-        raise SystemExit(1)
-
-    log.info("=" * 60)
-    log.info("CMC EMA SIGNAL BOT STARTED")
-    log.info("=" * 60)
-
-    asyncio.run(run_bot())     # CMC se top kitne coins lene hain (max free: 200)
-MIN_VOLUME_USD    = 5_000_000  # Min 24h volume filter ($5M)
-EMA_FAST          = 20
-EMA_SLOW          = 200
-ATR_PERIOD        = 14
-CANDLE_INTERVAL   = "15m"   # 15 minute candles
-CANDLE_LIMIT      = 250     # EMA 200 ke liye 250+ candles chahiye
-
-# Sirf ye coins scan karo (khali rakhne par TOP_N_COINS use hoga)
-CUSTOM_COINS = []
-# CUSTOM_COINS = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA"]
-
-# Ye coins skip karo (stablecoins etc.)
-SKIP_COINS = {"USDT","USDC","BUSD","DAI","TUSD","USDP","USDD","FDUSD",
-              "PYUSD","USDS","USD1","USDe","WBTC","WETH","STETH","WSTETH",
-              "WBETH","BTCB","CBBTC","WBNB","WEETH","LEO","CRV"}
-
-# Log file
-LOG_FILE = "cmc_ema_bot.log"
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  LOGGING SETUP
-# ═════════════════════════════════════════════════════════════════════════════
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s │ %(levelname)-7s │ %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-    ],
-)
-log = logging.getLogger("EMABot")
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  COINMARKETCAP  — Top coins list fetch
-# ═════════════════════════════════════════════════════════════════════════════
-
-CMC_BASE = "https://pro-api.coinmarketcap.com/v1"
-
-def cmc_headers() -> dict:
-    return {"X-CMC_PRO_API_KEY": CMC_API_KEY, "Accept": "application/json"}
-
-
-def fetch_top_coins(limit: int = TOP_N_COINS) -> list[str]:
-    """CMC se top-N coins ke symbols lata hai (by market cap)."""
-    url = f"{CMC_BASE}/cryptocurrency/listings/latest"
-    params = {
-        "start": 1,
-        "limit": limit,
-        "sort": "market_cap",
-        "cryptocurrency_type": "coins",
-        "convert": "USD",
-    }
-    try:
-        r = requests.get(url, headers=cmc_headers(), params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        symbols = []
-        for coin in data.get("data", []):
-            sym = coin["symbol"]
-            vol = coin.get("quote", {}).get("USD", {}).get("volume_24h", 0) or 0
-            if sym in SKIP_COINS:
-                continue
-            if vol < MIN_VOLUME_USD:
-                continue
-            symbols.append(sym)
-        log.info(f"CMC se {len(symbols)} coins mila (top {limit} se filter ke baad)")
-        return symbols
-    except Exception as e:
-        log.error(f"CMC fetch error: {e}")
-        return []
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  BINANCE PUBLIC API  — OHLCV candles (free, no key needed)
-#  CoinMarketCap historical OHLCV sirf paid plan mein hai,
-#  isliye Binance public klines use karte hain — prices same hoti hain.
-# ═════════════════════════════════════════════════════════════════════════════
-
-BINANCE_BASE = "https://api.binance.com/api/v3"
-
-
-def fetch_ohlcv(symbol: str, interval: str = CANDLE_INTERVAL,
-                limit: int = CANDLE_LIMIT) -> pd.DataFrame | None:
-    """Binance se OHLCV candles fetch karta hai."""
-    pair = f"{symbol}USDT"
-    url  = f"{BINANCE_BASE}/klines"
-    try:
-        r = requests.get(url,
-                         params={"symbol": pair, "interval": interval, "limit": limit},
-                         timeout=10)
-        if r.status_code == 400:
-            # Pair exist nahi karta Binance pe
-            return None
-        r.raise_for_status()
-        raw = r.json()
-        df  = pd.DataFrame(raw, columns=[
-            "ts","open","high","low","close","vol",
-            "close_ts","qvol","trades","tbvol","tqvol","_"
-        ])
-        for col in ["open","high","low","close","vol"]:
-            df[col] = df[col].astype(float)
-        df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-        return df[["ts","open","high","low","close","vol"]].reset_index(drop=True)
-    except Exception as e:
-        log.debug(f"  [{symbol}] OHLCV error: {e}")
-        return None
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  TECHNICAL INDICATORS
-# ═════════════════════════════════════════════════════════════════════════════
+    if v is None or (isinstance(v, float) and np.isnan(v)): return "N/A"
+    if   abs(v) < 0.000001: return f"{v:.10f}"
+    elif abs(v) < 0.0001  : return f"{v:.8f}"
+    elif abs(v) < 0.01    : return f"{v:.6f}"
+    elif abs(v) < 1       : return f"{v:.5f}"
+    elif abs(v) < 100     : return f"{v:.3f}"
+    else                  : return f"{v:,.2f}"
 
 def calc_ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
-
 
 def calc_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float:
     prev_close = df["close"].shift(1)
@@ -771,7 +106,6 @@ def calc_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float:
     ], axis=1).max(axis=1)
     return float(tr.ewm(span=period, adjust=False).mean().iloc[-1])
 
-
 def calc_rsi(series: pd.Series, period: int = 14) -> float:
     delta = series.diff()
     gain  = delta.clip(lower=0).ewm(span=period, adjust=False).mean()
@@ -779,119 +113,124 @@ def calc_rsi(series: pd.Series, period: int = 14) -> float:
     rs    = gain / loss.replace(0, np.nan)
     return float(100 - 100 / (1 + rs.iloc[-1]))
 
-
 def signal_strength(ema20_val, ema200_val, closes: pd.Series) -> float:
     gap = abs(ema20_val - ema200_val) / ema200_val * 100
     mom = abs((closes.iloc[-1] - closes.iloc[-6]) / closes.iloc[-6] * 100)
     return round(min(99.1, 74 + gap * 12 + mom * 1.8), 1)
 
+# ═══════════════════════════════════════════════════════════
+# CMC & BINANCE API FETCHERS
+# ═══════════════════════════════════════════════════════════
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  SIGNAL DETECTION
-# ═════════════════════════════════════════════════════════════════════════════
+def fetch_top_coins(limit: int = TOP_N_COINS) -> list[str]:
+    url = f"{CMC_BASE}/cryptocurrency/listings/latest"
+    params = {"start": 1, "limit": limit, "sort": "market_cap", "cryptocurrency_type": "coins", "convert": "USD"}
+    try:
+        r = session.get(url, headers={"X-CMC_PRO_API_KEY": CMC_API_KEY, "Accept": "application/json"}, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        symbols = []
+        for coin in data.get("data", []):
+            sym = coin["symbol"]
+            vol = coin.get("quote", {}).get("USD", {}).get("volume_24h", 0) or 0
+            if sym in SKIP_COINS or vol < MIN_VOLUME_USD: continue
+            symbols.append(sym)
+        return symbols
+    except Exception as e:
+        log.error(f"CMC fetch error: {e}")
+        return []
 
-def detect_signal(df: pd.DataFrame) -> dict | None:
-    """
-    EMA 20/200 crossover detect karta hai.
-    Returns signal dict ya None.
-    """
-    if len(df) < EMA_SLOW + 10:
+def fetch_ohlcv(symbol: str) -> pd.DataFrame | None:
+    pair = f"{symbol}USDT"
+    url  = f"{BINANCE_BASE}/klines"
+    try:
+        r = session.get(url, params={"symbol": pair, "interval": CANDLE_INTERVAL, "limit": CANDLE_LIMIT}, timeout=10)
+        if r.status_code == 400: return None
+        r.raise_for_status()
+        raw = r.json()
+        df  = pd.DataFrame(raw, columns=["ts","open","high","low","close","vol","close_ts","qvol","trades","tbvol","tqvol","_"])
+        for col in ["open","high","low","close","vol"]: df[col] = df[col].astype(float)
+        df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+        return df[["ts","open","high","low","close","vol"]].reset_index(drop=True)
+    except Exception as e:
+        log.debug(f"[{symbol}] OHLCV error: {e}")
         return None
 
+# ═══════════════════════════════════════════════════════════
+# NEW HIGH-FREQUENCY PULLBACK SIGNAL DETECTION
+# ═══════════════════════════════════════════════════════════
+
+def detect_signal(df: pd.DataFrame) -> dict | None:
+    if len(df) < EMA_SLOW + 10: return None
+
     closes = df["close"]
-    e20    = calc_ema(closes, EMA_FAST)
-    e200   = calc_ema(closes, EMA_SLOW)
-    n, p   = len(df) - 1, len(df) - 2
-
-    curr_above = e20.iloc[n] > e200.iloc[n]
-    prev_above = e20.iloc[p] > e200.iloc[p]
-
-    if curr_above == prev_above:
-        return None  # No crossover
+    highs = df["high"]
+    lows = df["low"]
+    
+    e20   = calc_ema(closes, EMA_FAST)
+    e200  = calc_ema(closes, EMA_SLOW)
+    n = len(df) - 1
 
     price    = float(closes.iloc[n])
     atr_val  = calc_atr(df)
     rsi_val  = calc_rsi(closes)
     strength = signal_strength(e20.iloc[n], e200.iloc[n], closes)
 
-    if curr_above:  # ─── LONG ────────────────────────────────────────────────
-        return {
-            "type"    : "LONG",
-            "entry"   : price,
-            "sl"      : price - atr_val * 1.5,
-            "tp1"     : price + atr_val * 2.0,
-            "tp2"     : price + atr_val * 4.0,
-            "tp3"     : price + atr_val * 6.0,
-            "ema20"   : float(e20.iloc[n]),
-            "ema200"  : float(e200.iloc[n]),
-            "atr"     : atr_val,
-            "rsi"     : rsi_val,
-            "strength": strength,
-            "candle_time": str(df["ts"].iloc[n]),
-        }
-    else:  # ─── SHORT ──────────────────────────────────────────────────────
-        return {
-            "type"    : "SHORT",
-            "entry"   : price,
-            "sl"      : price + atr_val * 1.5,
-            "tp1"     : price - atr_val * 2.0,
-            "tp2"     : price - atr_val * 4.0,
-            "tp3"     : price - atr_val * 6.0,
-            "ema20"   : float(e20.iloc[n]),
-            "ema200"  : float(e200.iloc[n]),
-            "atr"     : atr_val,
-            "rsi"     : rsi_val,
-            "strength": strength,
-            "candle_time": str(df["ts"].iloc[n]),
-        }
+    current_e20 = e20.iloc[n]
+    current_e200 = e200.iloc[n]
 
+    # 🟢 BULLISH PULLBACK (LONG SIGNAL)
+    if current_e20 > current_e200 and price > current_e200:
+        if lows.iloc[n] <= current_e20 * 1.002 and price >= current_e20:
+            if 48 < rsi_val < 70:
+                return {
+                    "type"    : "LONG", "entry"   : price,
+                    "sl"      : price - (atr_val * 1.5), 
+                    "tp1"     : price + (atr_val * 1.5),
+                    "tp2"     : price + (atr_val * 3.0), 
+                    "tp3"     : price + (atr_val * 5.0),
+                    "ema20"   : float(current_e20), "ema200"  : float(current_e200),
+                    "atr"     : atr_val, "rsi"     : rsi_val, "strength": strength,
+                    "candle_time": str(df["ts"].iloc[n]),
+                }
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  PRICE FORMATTER
-# ═════════════════════════════════════════════════════════════════════════════
+    # 🔴 BEARISH PULLBACK (SHORT SIGNAL)
+    if current_e20 < current_e200 and price < current_e200:
+        if highs.iloc[n] >= current_e20 * 0.998 and price <= current_e20:
+            if 30 < rsi_val < 52:
+                return {
+                    "type"    : "SHORT", "entry"   : price,
+                    "sl"      : price + (atr_val * 1.5), 
+                    "tp1"     : price - (atr_val * 1.5),
+                    "tp2"     : price - (atr_val * 3.0), 
+                    "tp3"     : price - (atr_val * 5.0),
+                    "ema20"   : float(current_e20), "ema200"  : float(current_e200),
+                    "atr"     : atr_val, "rsi"     : rsi_val, "strength": strength,
+                    "candle_time": str(df["ts"].iloc[n]),
+                }
 
-def fp(v: float) -> str:
-    if v is None or (isinstance(v, float) and np.isnan(v)):
-        return "N/A"
-    if   abs(v) < 0.000001: return f"{v:.10f}"
-    elif abs(v) < 0.0001  : return f"{v:.8f}"
-    elif abs(v) < 0.01    : return f"{v:.6f}"
-    elif abs(v) < 1       : return f"{v:.5f}"
-    elif abs(v) < 100     : return f"{v:.3f}"
-    else                  : return f"{v:,.2f}"
+    return None
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  TELEGRAM MESSAGE BUILDER
-# ═════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+# TELEGRAM MESSAGE BUILDERS
+# ═══════════════════════════════════════════════════════════
 
 def build_signal_msg(symbol: str, sig: dict) -> str:
     now      = datetime.now(timezone.utc).strftime("%d %b %Y  %H:%M UTC")
     is_long  = sig["type"] == "LONG"
     emoji    = "🟢" if is_long else "🔴"
-    direct   = "📈 *LONG  — BUY*" if is_long else "📉 *SHORT — SELL*"
-    cross    = ("EMA20 ↑ crossed *ABOVE* EMA200 (Bullish)"
-                if is_long else
-                "EMA20 ↓ crossed *BELOW* EMA200 (Bearish)")
+    direct   = "📈 *LONG  — BUY (Pullback)*" if is_long else "📉 *SHORT — SELL (Pullback)*"
+    desc     = "Price bounced off support at *EMA 20*" if is_long else "Price rejected at resistance from *EMA 20*"
 
-    # Strength bar
-    pct    = sig["strength"]
-    filled = round(pct / 10)
+    filled = round(sig["strength"] / 10)
     bar    = "█" * filled + "░" * (10 - filled)
-
-    # RSI label
-    rsi = sig.get("rsi", 50)
-    if   rsi > 70: rsi_label = f"{rsi:.1f} ⚠️ Overbought"
-    elif rsi < 30: rsi_label = f"{rsi:.1f} ⚠️ Oversold"
-    else         : rsi_label = f"{rsi:.1f} ✅ Neutral"
-
-    rr_ratio = "1 : 2 / 4 / 6"  # Risk:Reward (SL=1.5ATR, TP=2/4/6 ATR)
+    rsi_label = f"{sig['rsi']:.1f} ✅ Confirmed"
 
     return (
-        f"{emoji} *CMC SIGNAL — {symbol}/USDT*\n"
+        f"{emoji} *CMC FILTERED SIGNAL — {symbol}/USDT*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{direct}\n"
-        f"🔀 {cross}\n"
+        f"ℹ️ {desc}\n"
         f"🕐 *Time     :* `{now}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 *Entry    :* `$ {fp(sig['entry'])}`\n"
@@ -899,192 +238,116 @@ def build_signal_msg(symbol: str, sig: dict) -> str:
         f"🎯 *TP 1     :* `$ {fp(sig['tp1'])}`\n"
         f"🎯 *TP 2     :* `$ {fp(sig['tp2'])}`\n"
         f"🎯 *TP 3     :* `$ {fp(sig['tp3'])}`\n"
-        f"⚖️ *R:R Ratio:* `{rr_ratio}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📶 *EMA 20   :* `$ {fp(sig['ema20'])}`\n"
-        f"📶 *EMA 200  :* `$ {fp(sig['ema200'])}`\n"
-        f"📏 *ATR (14) :* `$ {fp(sig['atr'])}`\n"
         f"📊 *RSI (14) :* `{rsi_label}`\n"
+        f"💪 *Strength :* `{bar}` {sig['strength']}%\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💪 *Strength :* `{bar}` {pct}%\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ _Sirf educational. Apna analysis zaroor karein._\n"
-        f"📡 _Source: CoinMarketCap Top {TOP_N_COINS}_"
+        f"⚠️ _Educational purpose only. Follow risk management._"
     )
-
 
 def build_summary_msg(scanned: int, found: int, skipped: int) -> str:
     now = datetime.now(timezone.utc).strftime("%d %b %Y  %H:%M UTC")
+    if found == 0:
+        return (
+            f"📡 *Scan Complete — {now}*\n"
+            f"──────────────────────────\n"
+            f"🔍 Scanned : `{scanned}` coins\n"
+            f"❌ *Signals : No new filtered signals found.*\n"
+            f"⏭ Skipped : `{skipped}`\n"
+            f"⏱ Next scan in `{INTERVAL_MINUTES}` minutes..."
+        )
     return (
         f"📡 *Scan Complete — {now}*\n"
         f"──────────────────────────\n"
         f"🔍 Scanned : `{scanned}` coins\n"
-        f"✅ Signals : `{found}` crossovers found\n"
-        f"⏭ Skipped : `{skipped}` (no data / not listed)\n"
+        f"✅ Signals : `{found}` highly filtered pullbacks found\n"
+        f"⏭ Skipped : `{skipped}`\n"
         f"⏱ Next scan in `{INTERVAL_MINUTES}` minutes..."
     )
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  STATE  — Previously seen signals save karta hai (duplicate avoid)
-# ═════════════════════════════════════════════════════════════════════════════
-
-STATE_FILE = "bot_state.json"
+# ═══════════════════════════════════════════════════════════
+# STATE & MAIN LOOP
+# ═══════════════════════════════════════════════════════════
 
 def load_state() -> dict:
     if Path(STATE_FILE).exists():
-        try:
-            return json.loads(Path(STATE_FILE).read_text())
-        except Exception:
-            pass
+        try: return json.loads(Path(STATE_FILE).read_text())
+        except Exception: pass
     return {}
-
 
 def save_state(state: dict):
     Path(STATE_FILE).write_text(json.dumps(state, indent=2))
-
-
-def signal_key(symbol: str, sig: dict) -> str:
-    """Unique key: symbol + type + candle time — same signal dobara na bhejo."""
-    return f"{symbol}_{sig['type']}_{sig['candle_time']}"
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  MAIN BOT LOOP
-# ═════════════════════════════════════════════════════════════════════════════
 
 async def run_bot():
     bot   = Bot(token=BOT_TOKEN)
     state = load_state()
 
-    # ── Startup message ──────────────────────────────────────────────────────
-    coins_to_scan = CUSTOM_COINS if CUSTOM_COINS else []
     start_msg = (
-        f"🤖 *CMC EMA Signal Bot — Started!*\n"
+        f"🤖 *CMC Filtered Signal Bot — Started!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📌 *Source    :* CoinMarketCap Top {TOP_N_COINS}\n"
         f"⏱ *Interval  :* Every `{INTERVAL_MINUTES}` minutes\n"
-        f"📐 *Strategy  :* EMA {EMA_FAST} × EMA {EMA_SLOW} Crossover\n"
-        f"🕯 *Timeframe :* {CANDLE_INTERVAL.upper()} Candles\n"
-        f"💰 *Min Volume:* ${MIN_VOLUME_USD:,}\n"
+        f"📐 *Strategy  :* EMA Pullback + RSI (Trend Continuous)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏳ Fetching coin list from CMC..."
+        f"⏳ Scanning started..."
     )
     await bot.send_message(chat_id=CHAT_ID, text=start_msg, parse_mode=ParseMode.MARKDOWN)
-    log.info("Bot started. Fetching coin list from CoinMarketCap...")
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
     while True:
         cycle_start   = time.time()
         signals_found = 0
         skipped       = 0
 
-        # ── Step 1: Get coins ────────────────────────────────────────────────
-        if CUSTOM_COINS:
-            coins = CUSTOM_COINS
-        else:
-            coins = fetch_top_coins(TOP_N_COINS)
-            if not coins:
-                log.error("CMC se coins nahi mila. 5 min baad retry...")
-                await asyncio.sleep(300)
-                continue
+        coins = CUSTOM_COINS if CUSTOM_COINS else fetch_top_coins(TOP_N_COINS)
+        if not coins:
+            log.error("No coins fetched. Retrying in 5 mins...")
+            await asyncio.sleep(300)
+            continue
 
-        log.info(f"Scanning {len(coins)} coins...")
-
-        # ── Step 2: Scan each coin ───────────────────────────────────────────
         for symbol in coins:
             try:
                 df = fetch_ohlcv(symbol)
                 if df is None or len(df) < EMA_SLOW + 5:
                     skipped += 1
-                    await asyncio.sleep(0.1)
                     continue
 
                 sig = detect_signal(df)
-                if sig is None:
-                    continue
+                if sig is None: continue
 
-                key = signal_key(symbol, sig)
-                if key in state:
-                    log.debug(f"  [{symbol}] Duplicate signal skip")
-                    continue
+                key = f"{symbol}_{sig['type']}_{sig['candle_time']}"
+                if key in state: continue
 
-                # ── New signal! ──────────────────────────────────────────────
                 msg = build_signal_msg(symbol, sig)
-                await bot.send_message(
-                    chat_id=CHAT_ID,
-                    text=msg,
-                    parse_mode=ParseMode.MARKDOWN,
-                )
+                await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
+                
                 state[key] = True
                 save_state(state)
                 signals_found += 1
-                log.info(
-                    f"  ✅ Signal: {symbol}/USDT → {sig['type']} "
-                    f"@ ${fp(sig['entry'])}  strength={sig['strength']}%"
-                )
-                await asyncio.sleep(0.6)  # Telegram rate limit
+                await asyncio.sleep(0.6)
 
             except TelegramError as te:
-                log.error(f"  Telegram error [{symbol}]: {te}")
+                log.error(f"Telegram error [{symbol}]: {te}")
                 await asyncio.sleep(2)
             except Exception as e:
-                log.warning(f"  [{symbol}] Error: {e}")
                 skipped += 1
-                await asyncio.sleep(0.2)
 
-        # ── Step 3: Summary ───────────────────────────────────────────────────
         scanned = len(coins) - skipped
         summary = build_summary_msg(scanned, signals_found, skipped)
         try:
-            await bot.send_message(
-                chat_id=CHAT_ID,
-                text=summary,
-                parse_mode=ParseMode.MARKDOWN,
-            )
-        except Exception:
-            pass
+            await bot.send_message(chat_id=CHAT_ID, text=summary, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            log.error(f"Error sending summary: {e}")
 
-        # ── Step 4: Old state clean (rakhein sirf last 500 keys) ─────────────
         if len(state) > 500:
             keys = list(state.keys())
             state = {k: state[k] for k in keys[-500:]}
             save_state(state)
 
-        # ── Step 5: Wait ──────────────────────────────────────────────────────
         elapsed = time.time() - cycle_start
         wait    = max(10, INTERVAL_MINUTES * 60 - elapsed)
-        log.info(
-            f"Cycle done: {scanned} scanned, {signals_found} signals, "
-            f"{skipped} skipped. Next in {wait:.0f}s."
-        )
+        log.info(f"Cycle done. Signals found: {signals_found}. Waiting {wait:.0f}s.")
         await asyncio.sleep(wait)
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ═════════════════════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
-    # ── Config check ─────────────────────────────────────────────────────────
-    errors = []
-    if not BOT_TOKEN   : errors.append("8666315793:AAGQ-ejV45YezPFQZnOiIFhhawIePkCg7X4")
-    if not CHAT_ID     : errors.append("5911994666")
-    if not CMC_API_KEY : errors.append("725ae1359e2b4f95b90cd2b398886c25")
-
-    if errors:
-        print("\n" + "─"*50)
-        print("❌  CONFIGURATION ERROR:")
-        for e in errors:
-            print(f"    • {e}")
-        print("\n  Script ke top mein jakar values fill karein.")
-        print("  Ya config.env file banao (dekho README neeche).")
-        print("─"*50 + "\n")
-        raise SystemExit(1)
-
-    log.info("=" * 55)
-    log.info("  CMC EMA Signal Bot  |  Starting...")
-    log.info(f"  Top {TOP_N_COINS} coins | EMA {EMA_FAST}/{EMA_SLOW} | {CANDLE_INTERVAL.upper()} | Every {INTERVAL_MINUTES}min")
-    log.info("=" * 55)
-
+    log.info("Starting Bot...")
     asyncio.run(run_bot())
